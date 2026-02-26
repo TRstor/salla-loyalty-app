@@ -1,0 +1,194 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// التاجر (متجر سلة)
+model Merchant {
+  id              String           @id @default(uuid())
+  sallaStoreId    String           @unique @map("salla_store_id")
+  storeName       String           @map("store_name")
+  email           String?
+  accessToken     String?          @map("access_token")
+  refreshToken    String?          @map("refresh_token")
+  tokenExpiresAt  DateTime?        @map("token_expires_at")
+  isActive        Boolean          @default(true) @map("is_active")
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  settings        LoyaltySettings?
+  customers       Customer[]
+  transactions    PointTransaction[]
+  tiers           Tier[]
+  coupons         Coupon[]
+  referralCodes   ReferralCode[]
+
+  @@map("merchants")
+}
+
+// إعدادات نظام الولاء لكل تاجر
+model LoyaltySettings {
+  id                    String   @id @default(uuid())
+  merchantId            String   @unique @map("merchant_id")
+  merchant              Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  // إعدادات النقاط
+  pointsPerRiyal        Float    @default(1) @map("points_per_riyal")         // عدد النقاط لكل ريال
+  minOrderAmount        Float    @default(0) @map("min_order_amount")         // الحد الأدنى للطلب لاحتساب النقاط
+  pointsExpiryDays      Int      @default(365) @map("points_expiry_days")     // صلاحية النقاط بالأيام
+  
+  // إعدادات الاستبدال
+  pointsPerDiscount     Int      @default(100) @map("points_per_discount")    // عدد النقاط لكل 1 ريال خصم
+  minRedeemPoints       Int      @default(100) @map("min_redeem_points")      // الحد الأدنى لاستبدال النقاط
+  maxDiscountPercent    Float    @default(50) @map("max_discount_percent")    // أقصى خصم %
+  
+  // نقاط إضافية
+  signupBonus           Int      @default(50) @map("signup_bonus")            // نقاط التسجيل
+  referralBonus         Int      @default(100) @map("referral_bonus")         // نقاط الإحالة للمُحيل
+  referredBonus         Int      @default(50) @map("referred_bonus")          // نقاط الإحالة للمُحال
+  
+  // إعدادات عامة
+  isEnabled             Boolean  @default(true) @map("is_enabled")
+  programName           String   @default("برنامج الولاء") @map("program_name")
+  
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  @@map("loyalty_settings")
+}
+
+// العميل
+model Customer {
+  id              String           @id @default(uuid())
+  merchantId      String           @map("merchant_id")
+  merchant        Merchant         @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  sallaCustomerId String           @map("salla_customer_id")
+  name            String
+  email           String?
+  phone           String?
+  
+  // رصيد النقاط
+  totalPoints     Int              @default(0) @map("total_points")       // إجمالي النقاط المكتسبة
+  usedPoints      Int              @default(0) @map("used_points")        // النقاط المستخدمة
+  currentPoints   Int              @default(0) @map("current_points")     // الرصيد الحالي
+  
+  // المستوى
+  tierId          String?          @map("tier_id")
+  tier            Tier?            @relation(fields: [tierId], references: [id])
+  
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  transactions    PointTransaction[]
+  coupons         Coupon[]
+  referralsMade   ReferralCode[]   @relation("referrer")
+  referredBy      ReferralCode?    @relation("referred")
+
+  @@unique([merchantId, sallaCustomerId])
+  @@map("customers")
+}
+
+// مستويات العملاء
+model Tier {
+  id              String     @id @default(uuid())
+  merchantId      String     @map("merchant_id")
+  merchant        Merchant   @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  
+  name            String                                               // اسم المستوى
+  nameAr          String     @map("name_ar")                           // الاسم بالعربي
+  minPoints       Int        @map("min_points")                        // الحد الأدنى من النقاط
+  multiplier      Float      @default(1)                               // مضاعف النقاط
+  color           String     @default("#CD7F32")                       // لون المستوى
+  icon            String     @default("star")                          // أيقونة المستوى
+  benefits        String?                                              // المزايا (JSON)
+  sortOrder       Int        @default(0) @map("sort_order")
+  
+  createdAt       DateTime   @default(now()) @map("created_at")
+  updatedAt       DateTime   @updatedAt @map("updated_at")
+
+  customers       Customer[]
+
+  @@map("tiers")
+}
+
+// سجل معاملات النقاط
+model PointTransaction {
+  id              String          @id @default(uuid())
+  merchantId      String          @map("merchant_id")
+  merchant        Merchant        @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  customerId      String          @map("customer_id")
+  customer        Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  
+  type            TransactionType
+  points          Int                                                   // عدد النقاط (موجب أو سالب)
+  description     String                                               // وصف العملية
+  
+  // معلومات الطلب (إن وجد)
+  orderId         String?         @map("order_id")
+  orderAmount     Float?          @map("order_amount")
+  
+  // معلومات الكوبون (إن وجد)
+  couponId        String?         @map("coupon_id")
+  
+  expiresAt       DateTime?       @map("expires_at")
+  createdAt       DateTime        @default(now()) @map("created_at")
+
+  @@index([merchantId, customerId])
+  @@index([merchantId, createdAt])
+  @@map("point_transactions")
+}
+
+enum TransactionType {
+  EARN_PURCHASE    // كسب من شراء
+  EARN_SIGNUP      // كسب من تسجيل
+  EARN_REFERRAL    // كسب من إحالة
+  EARN_BONUS       // كسب إضافي يدوي
+  REDEEM_COUPON    // استبدال بكوبون
+  DEDUCT_MANUAL    // خصم يدوي
+  EXPIRED          // انتهاء صلاحية
+}
+
+// كوبونات الخصم المُنشأة
+model Coupon {
+  id              String       @id @default(uuid())
+  merchantId      String       @map("merchant_id")
+  merchant        Merchant     @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  customerId      String       @map("customer_id")
+  customer        Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  
+  code            String       @unique
+  discountAmount  Float        @map("discount_amount")        // قيمة الخصم
+  discountType    String       @default("fixed") @map("discount_type")  // fixed أو percentage
+  pointsUsed      Int          @map("points_used")            // النقاط المستخدمة
+  sallaCouponId   String?      @map("salla_coupon_id")        // معرف الكوبون في سلة
+  
+  isUsed          Boolean      @default(false) @map("is_used")
+  expiresAt       DateTime     @map("expires_at")
+  createdAt       DateTime     @default(now()) @map("created_at")
+
+  @@map("coupons")
+}
+
+// أكواد الإحالة
+model ReferralCode {
+  id              String    @id @default(uuid())
+  merchantId      String    @map("merchant_id")
+  merchant        Merchant  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  
+  referrerId      String    @map("referrer_id")
+  referrer        Customer  @relation("referrer", fields: [referrerId], references: [id], onDelete: Cascade)
+  
+  referredId      String?   @unique @map("referred_id")
+  referred        Customer? @relation("referred", fields: [referredId], references: [id])
+  
+  code            String    @unique
+  isUsed          Boolean   @default(false) @map("is_used")
+  
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  @@map("referral_codes")
+}
