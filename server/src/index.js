@@ -70,6 +70,42 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// === Seed: إنشاء تاجر تجريبي (للاختبار فقط) ===
+app.post('/api/seed/test-merchant', async (req, res) => {
+  try {
+    const testStoreId = '12345';
+    
+    const merchant = await prisma.merchant.upsert({
+      where: { sallaStoreId: testStoreId },
+      update: { isActive: true },
+      create: {
+        sallaStoreId: testStoreId,
+        storeName: 'متجر تجريبي',
+        email: 'test@test.com',
+        accessToken: 'test-token',
+        refreshToken: 'test-refresh',
+        tokenExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        settings: { create: {} },
+        tiers: {
+          createMany: {
+            data: [
+              { name: 'Bronze', nameAr: 'برونزي', minPoints: 0, multiplier: 1, color: '#CD7F32', sortOrder: 1 },
+              { name: 'Silver', nameAr: 'فضي', minPoints: 500, multiplier: 1.5, color: '#C0C0C0', sortOrder: 2 },
+              { name: 'Gold', nameAr: 'ذهبي', minPoints: 2000, multiplier: 2, color: '#FFD700', sortOrder: 3 },
+              { name: 'Platinum', nameAr: 'بلاتيني', minPoints: 5000, multiplier: 3, color: '#E5E4E2', sortOrder: 4 },
+            ],
+          },
+        },
+      },
+    });
+    
+    res.json({ success: true, storeId: testStoreId, message: 'تاجر تجريبي تم إنشاؤه. استخدم Store ID: 12345' });
+  } catch (error) {
+    console.error('Seed error:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // Error handler
 app.use((err, req, res, next) => {
   console.error('Error:', err);
