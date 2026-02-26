@@ -3,6 +3,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const cookieParser = require('cookie-parser');
+const { execSync } = require('child_process');
 const session = require('express-session');
 const config = require('./config');
 const prisma = require('./config/database');
@@ -118,9 +119,23 @@ app.use((err, req, res, next) => {
 
 // Start server
 const PORT = config.port;
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📦 Environment: ${config.nodeEnv}`);
+
+// Run migrations on startup
+async function runMigrations() {
+  try {
+    console.log('🔄 Running database migrations...');
+    execSync('npx prisma migrate deploy', { stdio: 'inherit' });
+    console.log('✅ Migrations completed successfully');
+  } catch (error) {
+    console.error('⚠️ Migration error (may already be applied):', error.message);
+  }
+}
+
+runMigrations().then(() => {
+  app.listen(PORT, () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`📦 Environment: ${config.nodeEnv}`);
+  });
 });
 
 // Graceful shutdown
