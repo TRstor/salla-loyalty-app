@@ -45,12 +45,12 @@ app.use(session({
   saveUninitialized: false,
 }));
 
-// Webhook routes need raw body - must be before json parser
-app.use('/api/webhooks', webhookRoutes);
-
-// JSON parser for other routes
+// JSON parser for all routes (including webhooks - Token mode doesn't need raw body)
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Webhook routes
+app.use('/api/webhooks', webhookRoutes);
 
 // API Routes
 app.use('/api/auth', authRoutes);

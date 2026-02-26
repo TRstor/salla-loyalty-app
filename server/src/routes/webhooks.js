@@ -1,41 +1,34 @@
 const express = require('express');
-const crypto = require('crypto');
+const jwt = require('jsonwebtoken');
 const config = require('../config');
 const prisma = require('../config/database');
 const PointsService = require('../services/pointsService');
+const SallaService = require('../services/sallaService');
 
 const router = express.Router();
 
-// Webhook parser (raw body)
-router.use(express.raw({ type: 'application/json' }));
-
-// التحقق من توقيع Webhook
-const verifyWebhookSignature = (req, res, next) => {
-  const signature = req.headers['x-salla-signature'];
+// التحقق من توكن Webhook (نمط Token)
+const verifyWebhookToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.replace('Bearer ', '');
   
-  if (!signature || !config.salla.webhookSecret) {
+  if (!config.salla.webhookSecret) {
     // في بيئة التطوير، نتخطى التحقق
     if (config.nodeEnv === 'development') {
-      req.body = JSON.parse(req.body);
       return next();
     }
-    return res.status(401).json({ message: 'Unauthorized' });
+    return res.status(401).json({ message: 'Webhook secret not configured' });
   }
 
-  const hash = crypto
-    .createHmac('sha256', config.salla.webhookSecret)
-    .update(req.body)
-    .digest('hex');
-
-  if (hash !== signature) {
-    return res.status(401).json({ message: 'Invalid signature' });
+  if (!token || token !== config.salla.webhookSecret) {
+    console.log('⚠️ Invalid webhook token');
+    return res.status(401).json({ message: 'Invalid webhook token' });
   }
 
-  req.body = JSON.parse(req.body);
   next();
 };
 
-router.use(verifyWebhookSignature);
+router.use(verifyWebhookToken);
 
 // معالج الأحداث الرئيسي
 router.post('/', async (req, res) => {
@@ -44,14 +37,30 @@ router.post('/', async (req, res) => {
     
     console.log(`📨 Webhook received: ${event}`, { merchantId });
 
+    // app.store.authorize - النمط السهل: استقبال التوكن عند تثبيت التطبيق
+    if (event === 'app.store.authorize') {
+      await handleAppStoreAuthorize(data, merchantId);
+      return res.json({ success: true });
+    }
+
     // البحث عن التاجر
     const merchant = await prisma.merchant.findUnique({
       where: { sallaStoreId: String(merchantId) },
       include: { settings: true },
     });
 
-    if (!merchant || !merchant.settings?.isEnabled) {
-      return res.json({ success: true, message: 'Merchant not found or loyalty disabled' });
+    if (!merchant) {
+      console.log(`⚠️ Merchant not found: ${merchantId}`);
+      return res.json({ success: true, message: 'Merchant not found' });
+    }
+
+    if (event === 'app.uninstalled') {
+      await handleAppUninstalled(merchant);
+      return res.json({ success: true });
+    }
+
+    if (!merchant.settings?.isEnabled) {
+      return res.json({ success: true, message: 'Loyalty disabled' });
     }
 
     switch (event) {
@@ -67,12 +76,6 @@ router.post('/', async (req, res) => {
       case 'customer.updated':
         await handleCustomerUpdated(merchant, data);
         break;
-      case 'app.store.authorize':
-        console.log('✅ App authorized for store:', merchantId);
-        break;
-      case 'app.uninstalled':
-        await handleAppUninstalled(merchant);
-        break;
       default:
         console.log(`⚠️ Unhandled event: ${event}`);
     }
@@ -83,6 +86,78 @@ router.post('/', async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 });
+
+// === النمط السهل: معالجة تثبيت التطبيق ===
+async function handleAppStoreAuthorize(data, merchantId) {
+  try {
+    const { access_token, refresh_token, expires } = data;
+
+    if (!access_token) {
+      console.log('⚠️ No access_token in app.store.authorize');
+      return;
+    }
+
+    console.log(`🔑 Received tokens for store: ${merchantId}`);
+
+    // جلب معلومات المتجر باستخدام التوكن
+    const sallaService = new SallaService(access_token);
+    let storeInfo;
+    try {
+      storeInfo = await sallaService.getStoreInfo();
+    } catch (err) {
+      console.error('Failed to get store info:', err.message);
+      storeInfo = { id: merchantId, name: `Store ${merchantId}`, email: null };
+    }
+
+    const storeId = String(storeInfo.id || merchantId);
+
+    // حفظ أو تحديث التاجر
+    const merchant = await prisma.merchant.upsert({
+      where: { sallaStoreId: storeId },
+      update: {
+        storeName: storeInfo.name || `Store ${storeId}`,
+        email: storeInfo.email,
+        accessToken: access_token,
+        refreshToken: refresh_token,
+        tokenExpiresAt: expires ? new Date(expires * 1000) : new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+        isActive: true,
+      },
+      create: {
+        sallaStoreId: storeId,
+        storeName: storeInfo.name || `Store ${storeId}`,
+        email: storeInfo.email,
+        accessToken: access_token,
+        refreshToken: refresh_token,
+        tokenExpiresAt: expires ? new Date(expires * 1000) : new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+        settings: {
+          create: {}, // إعدادات افتراضية
+        },
+        tiers: {
+          createMany: {
+            data: [
+              { name: 'Bronze', nameAr: 'برونزي', minPoints: 0, multiplier: 1, color: '#CD7F32', sortOrder: 1 },
+              { name: 'Silver', nameAr: 'فضي', minPoints: 500, multiplier: 1.5, color: '#C0C0C0', sortOrder: 2 },
+              { name: 'Gold', nameAr: 'ذهبي', minPoints: 2000, multiplier: 2, color: '#FFD700', sortOrder: 3 },
+              { name: 'Platinum', nameAr: 'بلاتيني', minPoints: 5000, multiplier: 3, color: '#E5E4E2', sortOrder: 4 },
+            ],
+          },
+        },
+      },
+    });
+
+    // إنشاء JWT للتاجر
+    const jwtToken = jwt.sign(
+      { merchantId: merchant.id, storeId: merchant.sallaStoreId },
+      config.jwt.secret,
+      { expiresIn: config.jwt.expiresIn }
+    );
+
+    console.log(`✅ Store ${storeInfo.name || storeId} authorized successfully`);
+    console.log(`🔗 Dashboard URL: ${config.clientUrl}/dashboard?token=${jwtToken}`);
+  } catch (error) {
+    console.error('Error handling app.store.authorize:', error);
+  }
+}
 
 // === معالجات الأحداث ===
 

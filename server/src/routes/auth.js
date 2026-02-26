@@ -7,15 +7,41 @@ const SallaService = require('../services/sallaService');
 
 const router = express.Router();
 
-// بدء عملية OAuth مع سلة
-router.get('/login', (req, res) => {
+// === النمط السهل: الدخول للوحة التحكم عبر Store ID ===
+// بعد تثبيت التطبيق من سلة، التوكن يوصل عبر webhook
+// التاجر يدخل للوحة التحكم من هذا الرابط
+
+router.get('/login', async (req, res) => {
+  const { store_id } = req.query;
+  
+  if (store_id) {
+    // النمط السهل: البحث عن التاجر بالـ store ID
+    try {
+      const merchant = await prisma.merchant.findUnique({
+        where: { sallaStoreId: String(store_id) },
+      });
+
+      if (merchant && merchant.isActive) {
+        const token = jwt.sign(
+          { merchantId: merchant.id, storeId: merchant.sallaStoreId },
+          config.jwt.secret,
+          { expiresIn: config.jwt.expiresIn }
+        );
+        return res.redirect(`${config.clientUrl}/dashboard?token=${token}`);
+      }
+    } catch (error) {
+      console.error('Login by store_id error:', error);
+    }
+  }
+
+  // Fallback: نمط مخصص (redirect OAuth)
   const state = uuidv4();
   req.session.oauthState = state;
   const authUrl = SallaService.getAuthUrl(state);
   res.redirect(authUrl);
 });
 
-// Callback من سلة بعد الموافقة
+// Callback من سلة بعد الموافقة (نمط مخصص - fallback)
 router.get('/callback', async (req, res) => {
   try {
     const { code, state } = req.query;
@@ -51,7 +77,7 @@ router.get('/callback', async (req, res) => {
         refreshToken: refresh_token,
         tokenExpiresAt: new Date(Date.now() + expires_in * 1000),
         settings: {
-          create: {}, // إعدادات افتراضية
+          create: {},
         },
         tiers: {
           createMany: {
@@ -73,11 +99,40 @@ router.get('/callback', async (req, res) => {
       { expiresIn: config.jwt.expiresIn }
     );
 
-    // توجيه للوحة التحكم مع التوكن
     res.redirect(`${config.clientUrl}/dashboard?token=${token}`);
   } catch (error) {
     console.error('OAuth Callback Error:', error);
     res.redirect(`${config.clientUrl}/error?message=${encodeURIComponent('فشل في تسجيل الدخول')}`);
+  }
+});
+
+// الدخول عبر Store ID (API endpoint)
+router.post('/login-by-store', async (req, res) => {
+  try {
+    const { storeId } = req.body;
+
+    if (!storeId) {
+      return res.status(400).json({ success: false, message: 'Store ID مطلوب' });
+    }
+
+    const merchant = await prisma.merchant.findUnique({
+      where: { sallaStoreId: String(storeId) },
+    });
+
+    if (!merchant || !merchant.isActive) {
+      return res.status(404).json({ success: false, message: 'المتجر غير مسجل. يرجى تثبيت التطبيق من سلة أولاً' });
+    }
+
+    const token = jwt.sign(
+      { merchantId: merchant.id, storeId: merchant.sallaStoreId },
+      config.jwt.secret,
+      { expiresIn: config.jwt.expiresIn }
+    );
+
+    res.json({ success: true, token, merchant: { id: merchant.id, storeName: merchant.storeName } });
+  } catch (error) {
+    console.error('Login by store error:', error);
+    res.status(500).json({ success: false, message: 'فشل في تسجيل الدخول' });
   }
 });
 
