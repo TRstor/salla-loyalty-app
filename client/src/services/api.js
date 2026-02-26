@@ -34,6 +34,7 @@ api.interceptors.response.use(
 export const authAPI = {
   verify: () => api.get('/auth/verify'),
   getLoginUrl: () => `${API_BASE}/auth/login`,
+  loginByStore: (storeId) => api.post('/auth/login-by-store', { storeId }),
 };
 
 // === Merchant API ===

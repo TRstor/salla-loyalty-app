@@ -45,7 +45,10 @@ services:
     headers:
       - path: /*
         name: X-Frame-Options
-        value: SAMEORIGIN
+        value: ALLOWALL
+      - path: /*
+        name: Content-Security-Policy
+        value: "frame-ancestors 'self' https://*.salla.sa https://*.salla.network https://salla.sa"
     routes:
       - type: rewrite
         source: /*

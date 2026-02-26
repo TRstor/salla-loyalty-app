@@ -22,16 +22,40 @@ function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // التحقق من وجود توكن في URL (بعد OAuth)
     const params = new URLSearchParams(window.location.search);
+    
+    // التحقق من وجود توكن في URL (بعد OAuth أو من سلة)
     const urlToken = params.get('token');
     if (urlToken) {
       localStorage.setItem('token', urlToken);
       window.history.replaceState({}, '', window.location.pathname);
+      checkAuth();
+      return;
+    }
+
+    // النمط السهل: استقبال store_id من سلة iframe
+    const storeId = params.get('store_id') || params.get('merchant');
+    if (storeId && !localStorage.getItem('token')) {
+      loginByStore(storeId);
+      return;
     }
 
     checkAuth();
   }, []);
+
+  const loginByStore = async (storeId) => {
+    try {
+      const { data } = await authAPI.loginByStore(storeId);
+      if (data.success && data.token) {
+        localStorage.setItem('token', data.token);
+        window.history.replaceState({}, '', window.location.pathname);
+        setMerchant(data.merchant);
+      }
+    } catch (err) {
+      console.error('Auto-login failed:', err);
+    }
+    setLoading(false);
+  };
 
   const checkAuth = async () => {
     const token = localStorage.getItem('token');

@@ -24,7 +24,10 @@ const app = express();
 app.set('trust proxy', 1);
 
 // Middleware
-app.use(helmet());
+app.use(helmet({
+  frameguard: false, // السماح بعرض التطبيق داخل iframe سلة
+  contentSecurityPolicy: false,
+}));
 app.use(cors({
   origin: function (origin, callback) {
     // Allow requests with no origin (mobile apps, curl, etc.)
