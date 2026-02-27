@@ -107,6 +107,117 @@ app.post('/api/seed/test-merchant', async (req, res) => {
   }
 });
 
+// === تسجيل يدوي للتاجر (عند فشل الـ webhook) ===
+app.get('/api/manual-register', (req, res) => {
+  res.send(`<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>تسجيل التاجر يدوياً</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; background: #f5f5f5; }
+    .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+    h1 { color: #004d40; text-align: center; }
+    p { color: #666; text-align: center; }
+    label { display: block; margin-top: 15px; font-weight: bold; color: #333; }
+    textarea, input { width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; box-sizing: border-box; }
+    textarea { height: 200px; direction: ltr; font-family: monospace; }
+    button { width: 100%; padding: 12px; margin-top: 20px; background: #004d40; color: white; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; }
+    button:hover { background: #00695c; }
+    #result { margin-top: 15px; padding: 15px; border-radius: 8px; display: none; }
+    .success { background: #e8f5e9; color: #2e7d32; }
+    .error { background: #ffebee; color: #c62828; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>تسجيل التاجر يدوياً</h1>
+    <p>الصق محتوى webhook الـ app.store.authorize هنا</p>
+    <label>محتوى الـ Webhook (JSON):</label>
+    <textarea id="webhookData" placeholder='الصق الـ JSON الكامل هنا...'></textarea>
+    <button onclick="register()">تسجيل التاجر</button>
+    <div id="result"></div>
+  </div>
+  <script>
+    async function register() {
+      const resultDiv = document.getElementById('result');
+      const data = document.getElementById('webhookData').value.trim();
+      if (!data) { resultDiv.style.display='block'; resultDiv.className='error'; resultDiv.textContent='الرجاء لصق البيانات'; return; }
+      try {
+        const json = JSON.parse(data);
+        const resp = await fetch('/api/manual-register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(json)
+        });
+        const result = await resp.json();
+        resultDiv.style.display = 'block';
+        if (result.success) {
+          resultDiv.className = 'success';
+          resultDiv.textContent = 'تم تسجيل التاجر بنجاح! Store ID: ' + result.storeId;
+        } else {
+          resultDiv.className = 'error';
+          resultDiv.textContent = 'خطأ: ' + result.message;
+        }
+      } catch (e) {
+        resultDiv.style.display = 'block';
+        resultDiv.className = 'error';
+        resultDiv.textContent = 'خطأ: تأكد أن البيانات JSON صحيح - ' + e.message;
+      }
+    }
+  </script>
+</body>
+</html>`);
+});
+
+app.post('/api/manual-register', async (req, res) => {
+  try {
+    const { merchant: merchantId, data } = req.body;
+    if (!data || !data.access_token) {
+      return res.status(400).json({ success: false, message: 'البيانات ناقصة - يجب أن يحتوي على access_token' });
+    }
+
+    const { access_token, refresh_token, expires } = data;
+    const storeId = String(merchantId);
+
+    console.log('📝 Manual merchant registration for store:', storeId);
+
+    const merchant = await prisma.merchant.upsert({
+      where: { sallaStoreId: storeId },
+      update: {
+        accessToken: access_token,
+        refreshToken: refresh_token,
+        tokenExpiresAt: expires ? new Date(expires * 1000) : new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+        isActive: true,
+      },
+      create: {
+        sallaStoreId: storeId,
+        storeName: data.app_name || 'Store ' + storeId,
+        accessToken: access_token,
+        refreshToken: refresh_token,
+        tokenExpiresAt: expires ? new Date(expires * 1000) : new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+        settings: { create: {} },
+        tiers: {
+          createMany: {
+            data: [
+              { name: 'Bronze', nameAr: 'برونزي', minPoints: 0, multiplier: 1, color: '#CD7F32', sortOrder: 1 },
+              { name: 'Silver', nameAr: 'فضي', minPoints: 500, multiplier: 1.5, color: '#C0C0C0', sortOrder: 2 },
+              { name: 'Gold', nameAr: 'ذهبي', minPoints: 2000, multiplier: 2, color: '#FFD700', sortOrder: 3 },
+              { name: 'Platinum', nameAr: 'بلاتيني', minPoints: 5000, multiplier: 3, color: '#E5E4E2', sortOrder: 4 },
+            ],
+          },
+        },
+      },
+    });
+
+    res.json({ success: true, storeId, message: 'تم تسجيل التاجر بنجاح' });
+  } catch (error) {
+    console.error('Manual register error:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // Error handler
 app.use((err, req, res, next) => {
   console.error('Error:', err);
