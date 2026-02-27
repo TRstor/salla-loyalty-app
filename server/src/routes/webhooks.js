@@ -30,8 +30,8 @@ const verifyWebhookToken = (req, res, next) => {
 
 router.use(verifyWebhookToken);
 
-// معالج الأحداث الرئيسي
-router.post('/', async (req, res) => {
+// معالج الأحداث الرئيسي - يستقبل على / و /salla
+const webhookHandler = async (req, res) => {
   try {
     const { event, merchant: merchantId, data } = req.body;
     
@@ -40,6 +40,12 @@ router.post('/', async (req, res) => {
     // app.store.authorize - النمط السهل: استقبال التوكن عند تثبيت التطبيق
     if (event === 'app.store.authorize') {
       await handleAppStoreAuthorize(data, merchantId);
+      return res.json({ success: true });
+    }
+
+    // app.installed - تأكيد تثبيت التطبيق
+    if (event === 'app.installed') {
+      console.log('✅ App installed for store:', merchantId);
       return res.json({ success: true });
     }
 
@@ -85,7 +91,11 @@ router.post('/', async (req, res) => {
     console.error('Webhook Error:', error);
     res.status(500).json({ success: false, message: error.message });
   }
-});
+};
+
+// تسجيل المسارين: / و /salla
+router.post('/', webhookHandler);
+router.post('/salla', webhookHandler);
 
 // === النمط السهل: معالجة تثبيت التطبيق ===
 async function handleAppStoreAuthorize(data, merchantId) {
